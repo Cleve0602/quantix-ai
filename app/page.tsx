@@ -155,9 +155,15 @@ export default function Dashboard() {
     router.push("/login");
   };
 
-  const handleAddProductToCloud = async (e: React.FormEvent) => {
+ const handleAddProductToCloud = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newName || !newStock || !newCost || !newSelling) return;
+
+    // Ensure we have a valid store ID before inserting
+    if (!activeStoreId) {
+      alert("Store session not ready. Please refresh the page.");
+      return;
+    }
 
     const { error } = await supabase.from("products").insert([
       {
@@ -168,7 +174,7 @@ export default function Dashboard() {
         selling_price: parseFloat(newSelling),
         category: newCategory,
         supplier: "Direct Vendor",
-        store_id: activeStoreId
+        store_id: activeStoreId // Saves directly under logged-in store account
       }
     ]);
 
@@ -177,7 +183,7 @@ export default function Dashboard() {
     } else {
       setNewName(""); setNewStock(""); setNewMin(""); setNewCost(""); setNewSelling("");
       setNewCategory("Electronics");
-      fetchCloudData();
+      fetchCloudData(); // Instantly re-fetches updated list from database
     }
   };
 
