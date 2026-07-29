@@ -110,7 +110,7 @@ export default function LoginPage() {
             />
           </div>
           <CardTitle className="text-lg font-extrabold text-slate-900 tracking-tight">
-            Quant Control Center
+            Quantix Ai Control Centre
           </CardTitle>
           <p className="text-xs text-slate-500 font-medium mt-1">
             Sign in or register your store workspace
