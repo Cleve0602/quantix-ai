@@ -70,6 +70,10 @@ export default function Dashboard() {
   const [products, setProducts] = useState<Product[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
 
+  // Search & Multi-Quantity Sale State
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [salesQuantities, setSalesQuantities] = useState<{ [key: string | number]: number }>({});
+
   const [newName, setNewName] = useState("");
   const [newCategory, setNewCategory] = useState("Electronics");
   const [newStock, setNewStock] = useState("");
@@ -137,6 +141,13 @@ export default function Dashboard() {
       setProducts(productsRes.data || []);
       setTransactions(transactionsRes.data || []);
 
+      // Initialize sale quantity counters to 1 for all products
+      const initialQtyMap: { [key: string | number]: number } = {};
+      (productsRes.data || []).forEach((p: Product) => {
+        initialQtyMap[p.id] = 1;
+      });
+      setSalesQuantities(initialQtyMap);
+
     } catch (err: any) {
       console.error("Layout Crash:", err);
       setAiInsight(`[Quant Error Context]: Failed to synchronize database layout. ${err.message}`);
@@ -155,7 +166,7 @@ export default function Dashboard() {
     router.push("/login");
   };
 
- const handleAddProductToCloud = async (e: React.FormEvent) => {
+  const handleAddProductToCloud = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newName || !newStock || !newCost || !newSelling) return;
 
@@ -187,21 +198,32 @@ export default function Dashboard() {
     }
   };
 
-  const handleQuickSale = async (product: Product) => {
-    if (product.stock_on_hand <= 0) {
-      alert("Out of stock! Cannot complete transaction.");
+  // Quantity Change Handler
+  const handleQuantityChange = (id: number | string, value: number) => {
+    const validValue = Math.max(1, value); // Ensure minimum is 1
+    setSalesQuantities((prev) => ({ ...prev, [id]: validValue }));
+  };
+
+  // Multi-Unit Dynamic Sale Handler
+  const handleExecuteMultiSale = async (product: Product) => {
+    const qtyToSell = salesQuantities[product.id] || 1;
+
+    if (product.stock_on_hand < qtyToSell) {
+      alert(`Cannot sell ${qtyToSell} units. Only ${product.stock_on_hand} available in stock!`);
       return;
     }
 
     const result = await processProductSale({
       productId: product.id,
-      quantity: 1,
+      quantity: qtyToSell,
       sellingPrice: Number(product.selling_price),
       paymentMethod: "Card",
       storeId: activeStoreId
     });
 
     if (result.success) {
+      // Reset input counter back to 1 and reload
+      setSalesQuantities((prev) => ({ ...prev, [product.id]: 1 }));
       fetchCloudData(); 
     } else {
       alert(`Sale process aborted: ${result.error}`);
@@ -268,6 +290,12 @@ export default function Dashboard() {
       setQuery("");
     }
   };
+
+  // Real-Time Search Filtering
+  const filteredProducts = products.filter((item) =>
+    item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (item.category && item.category.toLowerCase().includes(searchQuery.toLowerCase()))
+  );
 
   const totalRevenue = transactions.reduce((sum, tx) => sum + (Number(tx.total_price) || 0), 0);
   const totalOrders = transactions.length;
@@ -377,16 +405,6 @@ export default function Dashboard() {
           </Card>
 
           <Card className="bg-white border-slate-200 shadow-sm rounded-2xl">
-            <CardHeader className="flex flex-row items-center justify-between pb-1.5"><CardTitle className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Orders</CardTitle><div className="h-2 w-2 rounded-full bg-slate-300" /></CardHeader>
-            <CardContent>
-              <div className="text-xl font-extrabold tracking-tight text-slate-900">
-                {totalOrders.toLocaleString('en-ZA')}
-              </div>
-              <span className="text-[10px] font-bold text-blue-600 flex items-center gap-1 mt-1">↑ Throughput <span className="text-slate-400 font-normal">tickets closed</span></span>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-white border-slate-200 shadow-sm rounded-2xl">
             <CardHeader className="flex flex-row items-center justify-between pb-1.5"><CardTitle className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Stock Value</CardTitle><div className="h-2 w-2 rounded-full bg-emerald-500" /></CardHeader>
             <CardContent>
               <div className="text-xl font-extrabold tracking-tight text-slate-900">R{totalValue.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
@@ -461,7 +479,7 @@ export default function Dashboard() {
                   {transactions.length === 0 ? (
                     <div className="text-center py-12">
                       <p className="text-xs text-slate-400 font-medium">No sales transactions found in database cluster.</p>
-                      <p className="text-[10px] text-slate-300 mt-1">Click "Sell 1" in your stock tab to generate transaction records.</p>
+                      <p className="text-[10px] text-slate-300 mt-1">Click "Sell" in your stock tab to generate transaction records.</p>
                     </div>
                   ) : (
                     [...transactions].reverse().slice(0, 5).map((tx: any, idx) => {
@@ -504,6 +522,8 @@ export default function Dashboard() {
 
         {activeTab === "inventory" && (
           <section className="space-y-6 print:hidden">
+            
+            {/* ADD PRODUCT FORM */}
             <form onSubmit={handleAddProductToCloud} className="bg-white border border-slate-200 rounded-2xl p-5 grid gap-3 sm:grid-cols-5 items-end shadow-sm">
               <div className="sm:col-span-1 space-y-1.5"><label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 pl-0.5">Asset Description</label><Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Wireless Headphones" className="bg-white border-slate-200 text-xs rounded-xl h-9" /></div>
               <div className="sm:col-span-1 space-y-1.5">
@@ -519,6 +539,21 @@ export default function Dashboard() {
               <Button type="submit" className="sm:col-span-5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs h-9 rounded-xl shadow-md flex gap-2 justify-center items-center"><PlusCircle className="h-4 w-4" /> Inject New Inventory Record to Cluster</Button>
             </form>
 
+            {/* REAL-TIME SEARCH BAR */}
+            <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-sm">
+              <div className="relative">
+                <Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
+                <Input
+                  type="text"
+                  placeholder="Filter inventory lines by name or category..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-slate-50 border-slate-200 text-slate-800 text-xs rounded-xl pl-10 pr-4 h-10 focus-visible:ring-blue-600"
+                />
+              </div>
+            </div>
+
+            {/* PRODUCT TABLE VIEW */}
             <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse text-xs">
@@ -535,32 +570,85 @@ export default function Dashboard() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                    {products.map((p, idx) => {
-                      const isLow = p.stock_on_hand <= p.min_required;
-                      return (
-                        <tr key={p.id || idx} className={`transition-colors hover:bg-slate-50/50 ${isLow ? "bg-rose-50/20" : ""}`}>
-                          <td className="p-4 font-bold text-slate-900">{p.name}</td>
-                          <td className="p-4 text-slate-400 font-mono text-[11px]">{p.category}</td>
-                          <td className="p-4">
-                            <div className="flex items-center justify-center gap-2">
-                              <button onClick={() => handleAdjustStock(p.id, p.stock_on_hand, -1)} className="p-1 rounded bg-slate-100 text-slate-600 hover:bg-slate-200 transition"><Minus className="h-3 w-3" /></button>
-                              <span className={`w-16 text-center font-extrabold font-mono text-sm ${isLow ? "text-rose-500" : "text-slate-600"}`}>{p.stock_on_hand}</span>
-                              <button onClick={() => handleAdjustStock(p.id, p.stock_on_hand, 1)} className="p-1 rounded bg-slate-100 text-slate-600 hover:bg-slate-200 transition"><Plus className="h-3 w-3" /></button>
-                            </div>
-                          </td>
-                          <td className="p-4 text-right text-slate-400 font-mono">{p.min_required} units</td>
-                          <td className="p-4 text-right text-slate-500 font-mono">R{Number(p.cost_price).toFixed(2)}</td>
-                          <td className="p-4 text-right font-bold text-blue-600 font-mono">R{Number(p.selling_price).toFixed(2)}</td>
-                          <td className="p-4 text-right text-emerald-600 font-extrabold font-mono">R{(Number(p.selling_price) - Number(p.cost_price)).toFixed(2)}</td>
-                          <td className="p-4">
-                            <div className="flex items-center justify-center gap-2">
-                              <Button size="sm" onClick={() => handleQuickSale(p)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-2.5 py-1 h-7 rounded-lg text-[10px] flex items-center gap-1 shadow-sm"><ShoppingBag className="h-3 w-3" /> Sell 1</Button>
-                              <button onClick={() => handleDeleteProduct(p.id, p.name)} className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition" title="Delete Record"><Trash2 className="h-3.5 w-3.5" /></button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
+                    {filteredProducts.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="p-8 text-center text-slate-400 font-mono">
+                          {searchQuery ? "No matching products found." : "No products in store inventory yet."}
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredProducts.map((p, idx) => {
+                        const isLow = p.stock_on_hand <= p.min_required;
+                        const currentSaleQty = salesQuantities[p.id] || 1;
+
+                        return (
+                          <tr key={p.id || idx} className={`transition-colors hover:bg-slate-50/50 ${isLow ? "bg-rose-50/20" : ""}`}>
+                            <td className="p-4 font-bold text-slate-900">{p.name}</td>
+                            <td className="p-4 text-slate-400 font-mono text-[11px]">{p.category}</td>
+                            
+                            {/* STOCK ADJUSTMENT CONTROL */}
+                            <td className="p-4">
+                              <div className="flex items-center justify-center gap-2">
+                                <button onClick={() => handleAdjustStock(p.id, p.stock_on_hand, -1)} className="p-1 rounded bg-slate-100 text-slate-600 hover:bg-slate-200 transition"><Minus className="h-3 w-3" /></button>
+                                <span className={`w-12 text-center font-extrabold font-mono text-sm ${isLow ? "text-rose-500" : "text-slate-600"}`}>{p.stock_on_hand}</span>
+                                <button onClick={() => handleAdjustStock(p.id, p.stock_on_hand, 1)} className="p-1 rounded bg-slate-100 text-slate-600 hover:bg-slate-200 transition"><Plus className="h-3 w-3" /></button>
+                              </div>
+                            </td>
+
+                            <td className="p-4 text-right text-slate-400 font-mono">{p.min_required} units</td>
+                            <td className="p-4 text-right text-slate-500 font-mono">R{Number(p.cost_price).toFixed(2)}</td>
+                            <td className="p-4 text-right font-bold text-blue-600 font-mono">R{Number(p.selling_price).toFixed(2)}</td>
+                            <td className="p-4 text-right text-emerald-600 font-extrabold font-mono">R{(Number(p.selling_price) - Number(p.cost_price)).toFixed(2)}</td>
+                            
+                            {/* MANAGEMENT ACTIONS: PLUS/MINUS QUANTITY COUNTER + DYNAMIC SELL */}
+                            <td className="p-4">
+                              <div className="flex items-center justify-center gap-2">
+                                
+                                {/* Numeric Counter */}
+                                <div className="flex items-center bg-slate-100 rounded-lg border border-slate-200 p-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleQuantityChange(p.id, currentSaleQty - 1)}
+                                    className="w-6 h-6 flex items-center justify-center text-slate-600 hover:bg-slate-200 rounded font-bold transition"
+                                  >
+                                    -
+                                  </button>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max={p.stock_on_hand}
+                                    value={currentSaleQty}
+                                    onChange={(e) => handleQuantityChange(p.id, parseInt(e.target.value) || 1)}
+                                    className="w-10 text-center bg-transparent text-slate-800 text-xs font-bold focus:outline-none"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleQuantityChange(p.id, currentSaleQty + 1)}
+                                    className="w-6 h-6 flex items-center justify-center text-slate-600 hover:bg-slate-200 rounded font-bold transition"
+                                  >
+                                    +
+                                  </button>
+                                </div>
+
+                                {/* Dynamic Sell Button */}
+                                <Button 
+                                  size="sm" 
+                                  onClick={() => handleExecuteMultiSale(p)} 
+                                  disabled={p.stock_on_hand === 0}
+                                  className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-bold px-3 py-1 h-8 rounded-lg text-[10px] flex items-center gap-1 shadow-sm"
+                                >
+                                  <ShoppingBag className="h-3 w-3" /> Sell ({currentSaleQty})
+                                </Button>
+
+                                <button onClick={() => handleDeleteProduct(p.id, p.name)} className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition" title="Delete Record">
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
                   </tbody>
                 </table>
               </div>
