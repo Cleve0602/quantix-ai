@@ -5,15 +5,22 @@ export async function processProductSale({
   quantity,
   sellingPrice,
   paymentMethod,
-  storeId = "11111111-1111-1111-1111-111111111111"
+  storeId
 }: {
   productId: number | string;
   quantity: number;
   sellingPrice: number;
   paymentMethod: string;
-  storeId?: string;
+  storeId: string;
 }) {
   try {
+    // Guard: never let a sale process without a confirmed store scope.
+    // A silent default here previously risked misattributing sales to a
+    // hardcoded placeholder store instead of failing loudly.
+    if (!storeId) {
+      return { success: false, error: "No active store session. Refresh and try again." };
+    }
+
     // 1. Fetch current stock for the item matching active store
     const { data: product, error: fetchError } = await supabase
       .from("products")

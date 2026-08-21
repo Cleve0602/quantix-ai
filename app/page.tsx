@@ -30,9 +30,6 @@ import {
   Banknote
 } from "lucide-react";
 
-// Default Store ID fallback for initial sandbox / testing
-const DEFAULT_STORE_ID = "11111111-1111-1111-1111-111111111111";
-
 interface Product {
   id: number | string;
   name: string;
@@ -64,7 +61,7 @@ export default function Dashboard() {
 
   // Auth & Store Scoping State
   const [user, setUser] = useState<any>(null);
-  const [activeStoreId, setActiveStoreId] = useState<string>(DEFAULT_STORE_ID);
+  const [activeStoreId, setActiveStoreId] = useState<string | null>(null);
 
   // Purchase Order Export Modal
   const [showPoModal, setShowPoModal] = useState(false);
@@ -121,18 +118,20 @@ export default function Dashboard() {
   }, [router]);
 
   const fetchCloudData = async () => {
+    if (!activeStoreId) return;
+    const storeId = activeStoreId;
     setRefreshing(true);
     try {
       const [productsRes, transactionsRes] = await Promise.all([
         supabase
           .from("products")
           .select("*")
-          .eq("store_id", activeStoreId)
+          .eq("store_id", storeId)
           .order("name", { ascending: true }),
         supabase
           .from("sales_transactions")
           .select("*")
-          .eq("store_id", activeStoreId)
+          .eq("store_id", storeId)
       ]);
         
       if (productsRes.error) throw productsRes.error;
@@ -156,10 +155,10 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    if (user || activeStoreId) {
+    if (activeStoreId) {
       fetchCloudData();
     }
-  }, [activeStoreId, user]);
+  }, [activeStoreId]);
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -211,6 +210,11 @@ export default function Dashboard() {
       return;
     }
 
+    if (!activeStoreId) {
+      alert("Store session not ready. Please refresh the page.");
+      return;
+    }
+
     const result = await processProductSale({
       productId: product.id,
       quantity: qtyToSell,
@@ -228,6 +232,8 @@ export default function Dashboard() {
   };
 
   const handleAdjustStock = async (productId: number | string, currentStock: number, adjustment: number) => {
+    if (!activeStoreId) return;
+    const storeId = activeStoreId;
     const targetStock = currentStock + adjustment;
     if (targetStock < 0) return;
 
@@ -235,7 +241,7 @@ export default function Dashboard() {
       .from("products")
       .update({ stock_on_hand: targetStock })
       .eq("id", productId)
-      .eq("store_id", activeStoreId);
+      .eq("store_id", storeId);
 
     if (error) {
       alert("Failed to modify stock bounds: " + error.message);
@@ -245,6 +251,8 @@ export default function Dashboard() {
   };
 
   const handleDeleteProduct = async (productId: number | string, productName: string) => {
+    if (!activeStoreId) return;
+    const storeId = activeStoreId;
     if (!confirm(`Are you completely sure you want to delete "${productName}"?`)) {
       return;
     }
@@ -253,7 +261,7 @@ export default function Dashboard() {
       .from("products")
       .delete()
       .eq("id", productId)
-      .eq("store_id", activeStoreId);
+      .eq("store_id", storeId);
 
     if (error) {
       alert("Failed to drop database row: " + error.message);
@@ -267,11 +275,28 @@ export default function Dashboard() {
     setAiInsight("");
     const messageToSend = customMessage || query || "Give me a strategic overview of my current profit drivers and stock restock priorities.";
     
+    if (!activeStoreId) {
+      setAiInsight("Store session not ready yet. Give it a second and try again.");
+      setLoading(false);
+      return;
+    }
+
+    // RLS requires an authenticated request to resolve get_my_store_id(),
+    // so we pass the current session's access token to the API route.
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+
+    if (!accessToken) {
+      setAiInsight("Your session has expired. Please sign in again.");
+      setLoading(false);
+      return;
+    }
+
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: messageToSend }),
+        body: JSON.stringify({ message: messageToSend, storeId: activeStoreId, accessToken }),
       });
       
       const data = await res.json();

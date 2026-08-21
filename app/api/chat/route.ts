@@ -1,18 +1,45 @@
 import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
-import { supabase } from "@/lib/supabase";
+import { createClient } from "@supabase/supabase-js";
 
 // Initialize the Google Gen AI client using your hot env key
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 export async function POST(req: Request) {
   try {
-    const { message } = await req.json();
+    const { message, storeId, accessToken } = await req.json();
 
-    // 1. Fetch live stock directly from your Supabase spreadsheet rows
+    // Guard: refuse to run an inventory analysis with no store scope.
+    if (!storeId) {
+      return NextResponse.json({ error: "Missing store context. Refresh and try again." }, { status: 400 });
+    }
+
+    // Guard: this route must prove who's asking, or RLS will (correctly)
+    // return zero rows since auth.uid() would otherwise be null on a
+    // server-side request with no session attached.
+    if (!accessToken) {
+      return NextResponse.json({ error: "Missing session credentials. Please sign in again." }, { status: 401 });
+    }
+
+    // Create a request-scoped Supabase client authenticated as the calling
+    // user, so Row Level Security resolves auth.uid() correctly and the
+    // get_my_store_id() policies actually match the user's own store.
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        global: {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        },
+      }
+    );
+
+    // 1. Fetch live stock directly from your Supabase spreadsheet rows,
+    //    scoped strictly to the requesting store (RLS enforces this too)
     const { data: products, error: dbError } = await supabase
       .from("products")
-      .select("name, category, stock_on_hand, min_required, cost_price, selling_price, supplier");
+      .select("name, category, stock_on_hand, min_required, cost_price, selling_price, supplier")
+      .eq("store_id", storeId);
 
     if (dbError) {
       console.error("Supabase read error inside AI route:", dbError);

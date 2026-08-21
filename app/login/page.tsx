@@ -46,7 +46,11 @@ export default function LoginPage() {
     setErrorMsg("");
     setSuccessMsg("");
 
-    // 1. Register user in Supabase auth
+    // 1. Register user in Supabase auth.
+    // Store row creation is handled server-side by a Postgres trigger
+    // (on_auth_user_created) the moment this row lands in auth.users —
+    // no client-side insert needed, so there's no race with RLS or
+    // pending email confirmation.
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -58,30 +62,9 @@ export default function LoginPage() {
       return;
     }
 
-    // If user registration succeeded and session exists
     if (data.user) {
-      // Check if store already exists for this owner, or insert a new one
-      const { data: existingStore } = await supabase
-        .from("stores")
-        .select("id")
-        .eq("owner_id", data.user.id)
-        .single();
-
-      if (!existingStore) {
-        const { error: storeError } = await supabase.from("stores").insert([
-          {
-            name: `${email.split("@")[0]}'s Store`,
-            owner_id: data.user.id,
-          },
-        ]);
-
-        if (storeError) {
-          console.log("Store notice:", storeError.message);
-        }
-      }
-
       setSuccessMsg("Registration complete! Signing in...");
-      
+
       // Attempt sign in
       const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
         email,
